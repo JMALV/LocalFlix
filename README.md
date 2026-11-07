@@ -1,6 +1,6 @@
 # LocalFlix
 
-Un Netflix casero: ves tus series y películas (`.mkv`, `.mp4`…) desde el celular, la tablet o la TV, con portadas,
+Servidor multimedia para tu casa: ves tus series y películas (`.mkv`, `.mp4`…) desde el celular, la tablet o la TV, con portadas,
 "Continuar viendo" y salto automático al siguiente episodio. Corre en tu PC con Windows y solo necesita **Node.js** y
 **ffmpeg**. No usa base de datos ni dependencias de npm.
 
