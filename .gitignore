@@ -1,0 +1,6 @@
+data/
+node_modules/
+config.json
+config.json.tmp
+init.mp4
+.claude/
