@@ -247,3 +247,18 @@ body.playing header, body.playing main { display: none; }
 .fsb-list { max-height: 46vh; overflow-y: auto; margin-bottom: 12px; border-top: 1px solid var(--bg3); }
 .fsb-list button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 6px; border-bottom: 1px solid var(--bg3); overflow-wrap: anywhere; }
 .fsb-list button:hover, .fsb-list button:focus-visible { background: var(--bg3); outline: none; }
+
+/* ---------- contraseña ---------- */
+body.locked header { display: none; }
+.auth { display: grid; place-items: center; min-height: 100vh; min-height: 100dvh; padding: 24px var(--pad); }
+.auth-box { width: 100%; max-width: 380px; }
+.auth .logo.big { font-size: 34px; margin-bottom: 24px; }
+.auth h1 { margin: 0 0 10px; font-size: 24px; }
+.auth .lead { color: var(--muted); margin: 0 0 20px; }
+.auth-form { display: flex; flex-direction: column; gap: 10px; }
+.auth-form.inline { max-width: 380px; }
+.auth-form input { font: inherit; font-size: 16px; color: var(--fg); background: var(--bg3); border: 1px solid transparent; border-radius: 6px; padding: 12px 14px; outline: 0; }
+.auth-form input:focus { border-color: var(--muted); }
+.auth-form .btn { justify-content: center; padding: 12px; }
+.folders h2.sec { font-size: 19px; margin: 36px 0 8px; }
+.folders .lead code { background: var(--bg3); padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; user-select: all; }

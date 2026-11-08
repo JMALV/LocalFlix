@@ -6,6 +6,7 @@ import { config, saveConfig, ROOT, DATA, FFMPEG, FFPROBE } from './lib/config.js
 import { Library } from './lib/library.js';
 import * as media from './lib/media.js';
 import * as tmdb from './lib/tmdb.js';
+import * as auth from './lib/auth.js';
 import { JsonStore } from './lib/util.js';
 
 if (!FFMPEG || !FFPROBE) {
@@ -419,7 +420,9 @@ route('GET', /^\/api\/hls\/(\w+)\/index\.m3u8$/, async (req, res, m, url) => {
     const o = playOpts(it, info, url.searchParams);
     if (!o.sid) return json(res, { error: 'falta sid' }, 400);
     const key = `${it.id}|${o.t}|${o.audio}|${o.sub}|${o.mode}|${o.height}`;
-    const txt = await media.hlsPlaylist(o.sid, key, o);
+    let txt = await media.hlsPlaylist(o.sid, key, o);
+    // El reproductor nativo del iPhone no siempre manda la cookie: los segmentos llevan la clave en la URL.
+    if (auth.hasPassword()) txt = txt.replace(/(\/api\/hlsseg\/[^\s"]+)/g, `$1?k=${auth.streamKey()}`);
     res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' });
     res.end(txt);
   } catch (e) {
@@ -491,10 +494,11 @@ route('GET', /^\/api\/img\/(thumb|still|poster|backdrop)\/(\w+)$/, async (req, r
 // Listas M3U para VLC u otros reproductores.
 function m3u(req, res, entries, name) {
   const host = req.headers.host;
+  const k = auth.hasPassword() ? `?k=${auth.streamKey()}` : '';
   let out = '#EXTM3U\n';
   for (const { it, label } of entries) {
     const d = Math.round(media.cachedProbe(it)?.duration || -1);
-    out += `#EXTINF:${d},${label}\nhttp://${host}/api/file/${it.id}/${encodeURIComponent(it.file)}\n`;
+    out += `#EXTINF:${d},${label}\nhttp://${host}/api/file/${it.id}/${encodeURIComponent(it.file)}${k}\n`;
   }
   res.writeHead(200, { 'Content-Type': 'audio/x-mpegurl; charset=utf-8', 'Content-Disposition': `inline; filename="${name}.m3u"` });
   res.end(out);
@@ -601,6 +605,65 @@ function writeAllowed(req) {
   }
 }
 
+// ---------- contraseña ----------
+
+// Rutas que se pueden usar sin sesión: la interfaz (HTML/JS/CSS) y el propio login.
+const PUBLIC_API = new Set(['/api/auth', '/api/login', '/api/logout', '/api/password']);
+function canAccess(req, url) {
+  const p = url.pathname;
+  if (PUBLIC_API.has(p)) return true;
+  if (!p.startsWith('/api/') && !p.startsWith('/browse')) return true; // archivos de la interfaz
+  if (isLocalClient(req)) return true; // la PC donde corre LocalFlix no necesita contraseña
+  return auth.hasPassword() && auth.isAuthed(req, url);
+}
+const clientIp = (req) => bareAddr(req.socket.remoteAddress);
+
+route('GET', /^\/api\/auth$/, (req, res, m, url) => {
+  const local = isLocalClient(req);
+  const authed = local || auth.isAuthed(req, url);
+  json(res, { hasPassword: auth.hasPassword(), authed, local, minLength: auth.MIN_LENGTH, streamKey: authed ? auth.streamKey() : "", lanIP: local ? lanIPs()[0] || "" : "" });
+});
+
+route('POST', /^\/api\/login$/, async (req, res) => {
+  const ip = clientIp(req);
+  const wait = auth.loginBlockedFor(ip);
+  if (wait) return json(res, { ok: false, error: `Demasiados intentos. Espera ${wait} segundos.` }, 429);
+  if (!auth.hasPassword()) return json(res, { ok: false, error: 'Todavía no hay contraseña: configúrala en la PC.' }, 400);
+  let b;
+  try {
+    b = await readBody(req);
+  } catch {
+    return json(res, { ok: false }, 400);
+  }
+  if (!auth.checkPassword(b.password)) {
+    auth.loginFailed(ip);
+    console.warn(`[auth] contraseña incorrecta desde ${ip}`);
+    return json(res, { ok: false, error: 'Contraseña incorrecta.' }, 401);
+  }
+  auth.loginOk(ip);
+  res.setHeader('Set-Cookie', auth.newSessionCookie());
+  json(res, { ok: true });
+});
+
+route('POST', /^\/api\/logout$/, (req, res) => {
+  res.setHeader('Set-Cookie', auth.clearCookie());
+  json(res, { ok: true });
+});
+
+// Crear o cambiar la contraseña: solo desde la PC. Cambiarla cierra la sesión en todos los demás dispositivos.
+route('POST', /^\/api\/password$/, async (req, res) => {
+  if (!isLocalClient(req)) return json(res, { ok: false, error: 'La contraseña solo se puede cambiar desde la PC donde corre LocalFlix.' }, 403);
+  let b;
+  try {
+    b = await readBody(req);
+    auth.setPassword(b.password);
+  } catch (e) {
+    return json(res, { ok: false, error: e.message }, 400);
+  }
+  console.log('[auth] contraseña actualizada');
+  json(res, { ok: true, streamKey: auth.streamKey() });
+});
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   if (!hostAllowed(req.headers.host)) {
@@ -610,6 +673,16 @@ const server = http.createServer(async (req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD' && !writeAllowed(req)) {
     res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
     return res.end('Pedido rechazado.');
+  }
+  if (!canAccess(req, url)) {
+    const p = url.pathname;
+    // Kodi y VLC piden usuario y contraseña con el diálogo HTTP estándar; la web usa su propia pantalla.
+    const external = p.startsWith('/browse') || p.startsWith('/api/file/') || p.startsWith('/api/m3u/');
+    res.writeHead(401, {
+      'Content-Type': 'application/json; charset=utf-8',
+      ...(external && auth.hasPassword() ? { 'WWW-Authenticate': 'Basic realm="LocalFlix", charset="UTF-8"' } : {}),
+    });
+    return res.end(JSON.stringify({ error: auth.hasPassword() ? 'Necesitas iniciar sesión.' : 'LocalFlix todavía no está configurado: termina la configuración en la PC.', login: true }));
   }
   try {
     for (const r of routes) {
@@ -662,6 +735,7 @@ async function main() {
   console.log(`[ffmpeg] ${FFMPEG}`);
   console.log(`[ffmpeg] codificador de video: ${enc}${enc === 'libx264' ? ' (sin GPU: la conversión usará CPU)' : ' (GPU)'}`);
   if (!config.mediaDirs.length) console.log("[config] Todavía no elegiste carpetas: abre LocalFlix en el navegador y elígelas.");
+  if (!auth.hasPassword()) console.log("[auth] Todavía no hay contraseña: abre http://localhost:" + config.port + " en esta PC para crearla.");
   await lib.scan();
   server.on('error', (e) => {
     if (e.code === 'EADDRINUSE') console.error(`El puerto ${config.port} ya está en uso: LocalFlix probablemente ya está corriendo (usa "Detener LocalFlix.bat").`);

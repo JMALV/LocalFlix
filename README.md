@@ -42,26 +42,28 @@ winget install -e --id OpenJS.NodeJS.LTS
 winget install -e --id Gyan.FFmpeg
 ```
 
-### 3. Iniciar y elegir tus carpetas
+### 3. Iniciar, crear la contraseña y elegir tus carpetas
 
 Doble clic en **`Iniciar LocalFlix.bat`**. Se abre una consola, que tiene que quedar abierta, y el navegador en
 `http://localhost:8484`.
 
-La primera vez aparece la pantalla **Bienvenido a LocalFlix**:
+La primera vez:
 
-1. Toca **+ Agregar carpeta**.
-2. Navega hasta la carpeta con tus videos (o escribe la ruta, por ejemplo `D:\Series`) y toca **Usar esta carpeta**.
-3. Repite para agregar más carpetas y toca **Guardar**.
+1. **Crea una contraseña.** La vas a usar para entrar desde el celular, la tablet o la TV. En la PC donde corre
+   LocalFlix no se pide. Mientras no la crees, los demás dispositivos no pueden entrar.
+2. Aparece la pantalla **Bienvenido a LocalFlix**: toca **+ Agregar carpeta**.
+3. Navega hasta la carpeta con tus videos (o escribe la ruta, por ejemplo `D:\Series`) y toca **Usar esta carpeta**.
+4. Repite para agregar más carpetas y toca **Guardar**.
 
-Para cambiarlas después, usa el **ícono de carpeta** arriba a la derecha. Por seguridad, solo se pueden cambiar desde la
-PC donde corre LocalFlix.
+Para cambiar las carpetas o la contraseña después, usa el **ícono de carpeta** arriba a la derecha. Por seguridad, las
+dos cosas solo se pueden cambiar desde la PC donde corre LocalFlix.
 
 Windows pregunta si Node.js puede usar la red: marca **Redes privadas** y acepta. Sin eso, los celulares no se conectan.
 
 ### 4. Abrirlo en el celular
 
 La consola muestra la dirección de la PC en tu red, por ejemplo `http://192.168.1.50:8484`. Ábrela en el celular
-conectado **al mismo Wi-Fi**.
+conectado **al mismo Wi-Fi** y escribe la contraseña. La sesión queda abierta un año, o hasta que cambies la contraseña.
 
 - **Android (Chrome):** menú ⋮ → **Agregar a la pantalla principal**.
 - **iPhone (Safari):** botón Compartir → **Agregar a inicio**.
@@ -94,10 +96,12 @@ Google TV no trae navegador. Lo mejor es un reproductor que lea el archivo direc
   - dirección: la IP de tu PC
   - puerto `8484`
   - ruta `browse/`
+  - usuario: cualquiera (por ejemplo `kodi`); contraseña: la de LocalFlix
 
   Después asígnale el tipo de contenido "Series" y Kodi descarga pósters y sinopsis.
-- **VLC:** Explorar → Stream → `http://IP-DE-TU-PC:8484/api/m3u/all.m3u`. Ese enlace es toda la biblioteca; para una
-  sola serie, usa el botón "Lista M3U" de esa serie.
+- **VLC:** Explorar → Stream → el enlace que aparece en LocalFlix, en la PC: ícono de carpeta → **VLC y Kodi**. Se ve así:
+  `http://IP-DE-TU-PC:8484/api/m3u/all.m3u?k=CLAVE`. Ese enlace es toda la biblioteca; para una sola serie, usa el botón
+  "Lista M3U" de esa serie. La clave cambia cuando cambias la contraseña.
 - **Desde el celular:** en el reproductor, ⚙ → *Abrir en VLC / MX Player*.
 
 ---
@@ -157,10 +161,14 @@ pierde el progreso.
 
 ## Seguridad
 
-LocalFlix está pensado para la red de tu casa. No tiene usuarios ni contraseñas: cualquiera conectado a tu Wi-Fi puede
-ver y reproducir la biblioteca. **No abras el puerto 8484 en el router.**
+LocalFlix está pensado para la red de tu casa. **No abras el puerto 8484 en el router:** la conexión no está cifrada
+(HTTP).
 
 Protecciones incluidas:
+
+- **Contraseña:** se crea la primera vez y se pide en todos los dispositivos menos la PC donde corre LocalFlix. Solo se
+  cambia desde esa PC, y al cambiarla se cierra la sesión en todos los demás. Se guarda cifrada (scrypt) en
+  `data/auth.json`. Tras 5 intentos fallidos, LocalFlix hace esperar cada vez más antes del próximo intento.
 
 - **Solo tus videos:** el servidor entrega videos, subtítulos e imágenes de las carpetas elegidas, nunca otros archivos
   ni nada fuera de ellas.
@@ -183,3 +191,6 @@ agrégalo a `allowedHosts`. Las IP, `localhost`, el nombre de la PC y los nombre
 | "No encontré ffmpeg" | Ejecuta `Instalar.bat` o `winget install Gyan.FFmpeg` y abre una consola nueva. |
 | `node` no se reconoce | Node.js se acaba de instalar: cierra y vuelve a abrir la ventana (o reinicia la PC). |
 | No aparece un video nuevo | Se busca cada 30 min. Para buscar ya, toca **Guardar** en la pantalla de carpetas. |
+| Olvidé la contraseña | En la PC, ícono de carpeta → **Cambiar contraseña** (ahí no pide la actual). |
+| "LocalFlix todavía no está configurado" en el celular | Falta crear la contraseña: abre `http://localhost:8484` en la PC. |
+| VLC o Kodi dejaron de funcionar | Cambiaste la contraseña: actualiza la contraseña en Kodi y el enlace con la clave en VLC. |

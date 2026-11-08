@@ -4,8 +4,20 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const api = async (p, opt) => {
   const r = await fetch(`/api/${p}`, opt);
+  if (r.status === 401 && !p.startsWith('login')) {
+    showAuthScreen();
+    throw new Error('Necesitas iniciar sesión.');
+  }
   if (!r.ok) throw new Error((await r.text()) || r.statusText);
   return r.json();
+};
+const postJSON = (p, body) => api(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const errText = (e, def) => {
+  try {
+    return JSON.parse(e.message).error || def;
+  } catch {
+    return e.message || def;
+  }
 };
 const LS = {
   get(k, d) {
@@ -31,7 +43,8 @@ const ICON = {
 };
 
 let CFG = { preferredSubLang: 'spa', preferredAudioLang: '' };
-api('config').then((c) => (CFG = c)).catch(() => {});
+let AUTH = { hasPassword: true, authed: false, local: false, streamKey: '', minLength: 4 };
+const withKey = (u) => (AUTH.streamKey ? `${u}${u.includes('?') ? '&' : '?'}k=${AUTH.streamKey}` : u);
 
 const fmtTime = (s) => {
   s = Math.max(0, Math.floor(s || 0));
@@ -184,7 +197,7 @@ async function renderShow(id) {
   const label = r.started ? `${inProgress ? 'Continuar' : 'Reproducir'} ${epCode(r)}` : 'Reproducir';
   const extra =
     (r.started ? `<a class="btn" href="#/play/${s.seasonList.find((x) => x.n > 0)?.episodes[0]?.id || r.id}?t=0">${ICON.restart}Desde el inicio</a>` : '') +
-    `<a class="btn" href="/api/m3u/show/${s.id}.m3u" title="Lista para VLC / Kodi">${ICON.list}Lista M3U</a>`;
+    `<a class="btn" href="${withKey(`/api/m3u/show/${s.id}.m3u`)}" title="Lista para VLC / Kodi">${ICON.list}Lista M3U</a>`;
   const seasonSel = LS.get(`season.${id}`, null);
   const cur = s.seasonList.find((x) => x.n === seasonSel) ? seasonSel : r.season ?? s.seasonList[0]?.n;
   showState = { s, season: cur };
@@ -257,6 +270,7 @@ let lastHash = null;
 let renderToken = 0;
 
 async function router() {
+  if (document.body.classList.contains('locked')) return;
   const hash = location.hash || '#/';
   if (lastHash && !lastHash.startsWith('#/play')) scrollMem[lastHash] = scrollY;
   const prev = lastHash;
@@ -289,6 +303,59 @@ window.addEventListener('hashchange', router);
 
 const FOLDER_ICON = '<svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2Z"/></svg>';
 
+// Contraseña (cambiarla solo desde la PC) y enlaces para reproductores externos.
+function accountHtml() {
+  const host = `${location.hostname === 'localhost' ? AUTH.lanIP || 'IP-DE-ESTA-PC' : location.hostname}:${location.port || 80}`;
+  const m3u = `http://${host}/api/m3u/all.m3u?k=${AUTH.streamKey}`;
+  return `
+    <h2 class="sec">Contraseña</h2>
+    ${
+      AUTH.local
+        ? `<p class="lead">Se pide en el celular, la tablet y la TV. Al cambiarla, se cierra la sesión en todos esos dispositivos.</p>
+      <form id="chgForm" class="auth-form inline">
+        <input type="password" id="np1" placeholder="Contraseña nueva" autocomplete="new-password" required minlength="${AUTH.minLength}">
+        <input type="password" id="np2" placeholder="Repite la contraseña" autocomplete="new-password" required>
+        <button class="btn primary">Cambiar contraseña</button>
+      </form>`
+        : `<p class="lead">La contraseña solo se puede cambiar desde la PC donde corre LocalFlix.</p>
+      <button class="btn" id="logoutBtn">Cerrar sesión en este dispositivo</button>`
+    }
+    <div class="fs-msg" id="accMsg"></div>
+    <h2 class="sec">VLC y Kodi</h2>
+    <p class="lead"><b>VLC:</b> Explorar → Stream → <code class="sel">${esc(m3u)}</code></p>
+    <p class="lead"><b>Kodi:</b> fuente "Servidor web (HTTP)", ruta <code>browse/</code>, con cualquier usuario y la contraseña de LocalFlix.</p>`;
+}
+
+function bindAccount() {
+  const msg = (t, err = true) => {
+    $('#accMsg').textContent = t;
+    $('#accMsg').classList.toggle('err', err);
+  };
+  const chg = $('#chgForm');
+  if (chg) {
+    chg.onsubmit = async (e) => {
+      e.preventDefault();
+      if ($('#np1').value !== $('#np2').value) return msg('Las contraseñas no coinciden.');
+      try {
+        const r = await postJSON('password', { password: $('#np1').value });
+        AUTH.streamKey = r.streamKey;
+        chg.reset();
+        msg('Contraseña cambiada. Los demás dispositivos tienen que volver a entrar.', false);
+        $('.sel') && ($('.sel').textContent = $('.sel').textContent.replace(/k=[\w-]*/, `k=${r.streamKey}`));
+      } catch (err) {
+        msg(errText(err, 'No se pudo cambiar.'));
+      }
+    };
+  }
+  const out = $('#logoutBtn');
+  if (out) {
+    out.onclick = async () => {
+      await postJSON('logout', {}).catch(() => {});
+      boot();
+    };
+  }
+}
+
 async function renderFolders() {
   const s = await api('settings');
   const F = { dirs: s.mediaDirs.map((d) => d.path), bad: new Set(s.mediaDirs.filter((d) => !d.ok).map((d) => d.path)), browse: null, saved: s.mediaDirs.map((d) => d.path).join('\n') };
@@ -315,7 +382,9 @@ async function renderFolders() {
       <ul class="fsb-list" id="fsList"></ul>
       <div class="actions"><button class="btn primary" id="fsPick">Usar esta carpeta</button><button class="btn" id="fsCancel">Cancelar</button></div>
     </div>
+    ${accountHtml()}
   </div>`;
+  bindAccount();
 
   const list = $('#dirList');
   const msg = (t, err) => {
@@ -564,7 +633,8 @@ function startStream(t, { autoplay = true } = {}) {
   P.lastCT = -1;
   const q = new URLSearchParams({ t: t.toFixed(2), a: P.audio, m: P.mode, q: P.quality, sid: P.sid });
   if (P.sub >= 0) q.set('s', P.sub);
-  video.src = USE_HLS ? `/api/hls/${P.item.id}/index.m3u8?${q}` : `/api/play/${P.item.id}?${q}`;
+  // En iPhone el reproductor nativo pide la lista HLS por su cuenta: lleva la clave en la URL.
+  video.src = USE_HLS ? withKey(`/api/hls/${P.item.id}/index.m3u8?${q}`) : `/api/play/${P.item.id}?${q}`;
   spinner(true);
   showError(null);
   if (autoplay) video.play().catch(() => spinner(false));
@@ -707,9 +777,9 @@ function renderPanel() {
   const al = trackLabels(audio, 'a');
   const sl = trackLabels(subs, 's');
   const opt = (attr, val, on, label, extra = '') => `<button class="opt ${on ? 'on' : ''}" data-${attr}="${val}">${esc(label)}${extra ? `<small>${esc(extra)}</small>` : ''}</button>`;
-  const fileUrl = `${location.origin}/api/file/${P.item.id}/${encodeURIComponent(P.item.file)}`;
+  const fileUrl = withKey(`${location.origin}/api/file/${P.item.id}/${encodeURIComponent(P.item.file)}`);
   const android = /Android/i.test(navigator.userAgent);
-  const intent = `intent://${location.host}/api/file/${P.item.id}/${encodeURIComponent(P.item.file)}#Intent;scheme=http;type=video/*;S.title=${encodeURIComponent($('#plTitle').textContent)};end`;
+  const intent = `intent://${withKey(`${location.host}/api/file/${P.item.id}/${encodeURIComponent(P.item.file)}`)}#Intent;scheme=http;type=video/*;S.title=${encodeURIComponent($('#plTitle').textContent)};end`;
   const curSub = subs[P.sub];
   panel.innerHTML = `
     <h4>Audio</h4>${audio.map((a, i) => opt('a', i, i === P.audio, al[i].label, al[i].extra)).join('') || '<div class="note">Sin audio</div>'}
@@ -1122,4 +1192,92 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-router();
+// ---------- contraseña ----------
+
+let authShown = false;
+function authPage(title, lead, form = '') {
+  closePlayer();
+  document.body.classList.add('locked');
+  app.innerHTML = `<div class="page auth"><div class="auth-box">
+    <div class="logo big">Local<b>Flix</b></div>
+    <h1>${title}</h1>
+    <p class="lead">${lead}</p>${form}
+    <div class="fs-msg" id="authMsg"></div>
+  </div></div>`;
+}
+const authMsg = (t, err = true) => {
+  const m = $('#authMsg');
+  if (!m) return;
+  m.textContent = t;
+  m.classList.toggle('err', err);
+};
+
+function showAuthScreen() {
+  if (authShown) return;
+  authShown = true;
+  if (!AUTH.hasPassword && !AUTH.local) {
+    return authPage('LocalFlix todavía no está configurado', `Abre LocalFlix en la PC donde está instalado (<b>http://localhost:${location.port || 80}</b>) y crea la contraseña. Después vuelve a esta página.`);
+  }
+  if (!AUTH.hasPassword) {
+    authPage(
+      'Crea una contraseña',
+      'La vas a usar para entrar desde el celular, la tablet o la TV. En esta PC no hace falta escribirla. Solo se puede cambiar desde aquí.',
+      `<form id="pwForm" class="auth-form">
+        <input type="password" id="pw1" placeholder="Contraseña" autocomplete="new-password" required minlength="${AUTH.minLength}">
+        <input type="password" id="pw2" placeholder="Repite la contraseña" autocomplete="new-password" required>
+        <button class="btn primary">Guardar contraseña</button>
+      </form>`,
+    );
+    $('#pw1').focus();
+    $('#pwForm').onsubmit = async (e) => {
+      e.preventDefault();
+      if ($('#pw1').value !== $('#pw2').value) return authMsg('Las contraseñas no coinciden.');
+      try {
+        await postJSON('password', { password: $('#pw1').value });
+        await boot();
+      } catch (err) {
+        authMsg(errText(err, 'No se pudo guardar.'));
+      }
+    };
+    return;
+  }
+  authPage(
+    'Iniciar sesión',
+    'Escribe la contraseña de LocalFlix.',
+    `<form id="loginForm" class="auth-form">
+      <input type="password" id="pw" placeholder="Contraseña" autocomplete="current-password" required>
+      <button class="btn primary">Entrar</button>
+    </form>`,
+  );
+  $('#pw').focus();
+  $('#loginForm').onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button');
+    btn.disabled = true;
+    try {
+      await postJSON('login', { password: $('#pw').value });
+      await boot();
+    } catch (err) {
+      authMsg(errText(err, 'No se pudo entrar.'));
+      $('#pw').select();
+    } finally {
+      btn.disabled = false;
+    }
+  };
+}
+
+async function boot() {
+  try {
+    AUTH = await api('auth');
+  } catch {}
+  if (!AUTH.hasPassword || !AUTH.authed) {
+    authShown = false;
+    return showAuthScreen();
+  }
+  authShown = false;
+  document.body.classList.remove('locked');
+  api('config').then((c) => (CFG = c)).catch(() => {});
+  router();
+}
+
+boot();
