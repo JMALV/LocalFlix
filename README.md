@@ -53,7 +53,8 @@ La primera vez aparece la pantalla **Bienvenido a LocalFlix**:
 2. Navega hasta la carpeta con tus videos (o escribe la ruta, por ejemplo `D:\Series`) y toca **Usar esta carpeta**.
 3. Repite para agregar más carpetas y toca **Guardar**.
 
-Para cambiarlas después, usa el **ícono de carpeta** arriba a la derecha.
+Para cambiarlas después, usa el **ícono de carpeta** arriba a la derecha. Por seguridad, solo se pueden cambiar desde la
+PC donde corre LocalFlix.
 
 Windows pregunta si Node.js puede usar la red: marca **Redes privadas** y acepta. Sin eso, los celulares no se conectan.
 
@@ -147,14 +148,31 @@ Se crea solo al guardar las carpetas. Puedes editarlo a mano, con LocalFlix dete
 | `tmdbApiKey` | Opcional, para pósters |
 | `rescanMinutes` | Cada cuánto buscar archivos nuevos (30) |
 | `ffmpeg`, `ffprobe` | Ruta a mano, si no los encuentra solo |
+| `maxStreams` | Reproducciones simultáneas como máximo (4) |
+| `remoteSettings` | `true` permite cambiar las carpetas desde otros dispositivos (por defecto, solo desde la PC) |
+| `allowedHosts` | Nombres extra con los que entras a LocalFlix, por ejemplo `["pc-living"]` |
 
 El progreso, las miniaturas y la caché se guardan en `data/`. Puedes borrar esa carpeta sin perder los videos, pero se
 pierde el progreso.
 
 ## Seguridad
 
-LocalFlix no tiene usuarios ni contraseñas: cualquiera conectado a tu Wi-Fi puede ver la biblioteca y cambiar las
-carpetas. Úsalo solo en tu red de casa y no abras el puerto 8484 en el router.
+LocalFlix está pensado para la red de tu casa. No tiene usuarios ni contraseñas: cualquiera conectado a tu Wi-Fi puede
+ver y reproducir la biblioteca. **No abras el puerto 8484 en el router.**
+
+Protecciones incluidas:
+
+- **Solo tus videos:** el servidor entrega videos, subtítulos e imágenes de las carpetas elegidas, nunca otros archivos
+  ni nada fuera de ellas.
+- **Carpetas solo desde la PC:** las carpetas se eligen únicamente desde la PC donde corre LocalFlix. Desde el celular
+  se ven, pero no se pueden cambiar (se puede habilitar con `remoteSettings`).
+- **Páginas web externas bloqueadas:** una página maliciosa abierta en tu navegador no puede mandarle órdenes a
+  LocalFlix ni leer tu biblioteca. El servidor rechaza pedidos que no vengan de su propia interfaz o que usen un nombre
+  de dominio ajeno (protección contra *DNS rebinding*).
+- **Límite de reproducciones:** como máximo 4 a la vez (`maxStreams`), para que nadie sature la PC.
+
+Si entras con un nombre propio para la PC (por ejemplo `http://pc-living:8484`) y aparece "Host no permitido",
+agrégalo a `allowedHosts`. Las IP, `localhost`, el nombre de la PC y los nombres `.local` ya funcionan.
 
 ## Problemas comunes
 

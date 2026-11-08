@@ -227,15 +227,21 @@ const isDir = (p) => {
   }
 };
 
+// Las carpetas solo se cambian desde la PC donde corre LocalFlix (salvo "remoteSettings": true).
+const canEdit = (req) => config.remoteSettings === true || isLocalClient(req);
+const denyRemote = (res) => json(res, { ok: false, error: 'Las carpetas solo se pueden cambiar desde la PC donde corre LocalFlix.' }, 403);
+
 route('GET', /^\/api\/settings$/, (req, res) =>
   json(res, {
     mediaDirs: config.mediaDirs.map((p) => ({ path: p, ok: isDir(p) })),
     items: lib.items.size,
     scanning: !!lib.scanning,
+    canEdit: canEdit(req),
   }),
 );
 
 route('POST', /^\/api\/settings$/, async (req, res) => {
+  if (!canEdit(req)) return denyRemote(res);
   let b;
   try {
     b = await readBody(req);
@@ -257,7 +263,8 @@ route('POST', /^\/api\/settings$/, async (req, res) => {
 
 // Explorador para elegir carpetas desde la web: solo devuelve nombres de carpetas, nunca archivos.
 route('GET', /^\/api\/fs$/, (req, res) => {
-  const q = new URL(req.url, 'http://x').searchParams.get('path');
+  if (!canEdit(req)) return denyRemote(res);
+  const q =new URL(req.url, 'http://x').searchParams.get('path');
   if (!q) {
     const roots = [];
     if (process.platform === 'win32') {
@@ -417,7 +424,7 @@ route('GET', /^\/api\/hls\/(\w+)\/index\.m3u8$/, async (req, res, m, url) => {
     res.end(txt);
   } catch (e) {
     console.warn('[hls]', e.message);
-    json(res, { error: e.message }, 500);
+    json(res, { error: e.message }, e.busy ? 503 : 500);
   }
 });
 
@@ -425,6 +432,12 @@ route('GET', /^\/api\/hlsseg\/([\w-]+)\/([\w-]+)\/([\w.]+)$/, (req, res, m) => {
   const f = media.hlsSegment(m[1], m[2], m[3]);
   if (!f) return notFound(res);
   sendFile(req, res, f, { cache: 'no-cache' });
+});
+
+// El reproductor lo consulta cuando falla, para distinguir "límite de reproducciones" de un error del video.
+route('GET', /^\/api\/busy$/, (req, res, m, url) => {
+  const sid = (url.searchParams.get('sid') || '').replace(/[^\w-]/g, '');
+  json(res, { busy: media.tooBusy(sid), max: Math.max(1, +config.maxStreams || 4) });
 });
 
 // Archivo original con soporte de Range (VLC, Kodi, MX Player...).
@@ -502,6 +515,7 @@ route('GET', /^\/api\/m3u\/all\.m3u$/, (req, res) => {
 });
 
 // Listado de carpetas estilo Apache: Kodi lo puede agregar como fuente "HTTP".
+const BROWSE_EXT = /\.(mkv|mp4|m4v|avi|mov|webm|ts|m2ts|wmv|mpg|mpeg|srt|ass|ssa|sub|idx|jpg|jpeg|png|nfo)$/i;
 route('GET', /^\/browse(\/.*)?$/, (req, res, m) => {
   const parts = (m[1] || '/')
     .split('/')
@@ -517,19 +531,20 @@ route('GET', /^\/browse(\/.*)?$/, (req, res, m) => {
   }
   const root = config.mediaDirs[+parts[0]];
   if (!root || !/^\d+$/.test(parts[0])) return notFound(res);
+  if (parts.slice(1).some((p) => p.startsWith('.') || p.startsWith('$'))) return notFound(res);
   const full = path.resolve(root, ...parts.slice(1));
   if (full !== root && !full.startsWith(root + path.sep)) return notFound(res);
   fs.stat(full, (err, st) => {
     if (err) return notFound(res);
-    if (st.isFile()) return sendFile(req, res, full);
+    // Solo videos, subtítulos e imágenes: nunca otros archivos que haya en la carpeta.
+    if (st.isFile()) return BROWSE_EXT.test(full) ? sendFile(req, res, full) : notFound(res);
     if (!req.url.split('?')[0].endsWith('/')) {
       res.writeHead(301, { Location: req.url.split('?')[0] + '/' });
       return res.end();
     }
-    const allowed = /\.(mkv|mp4|m4v|avi|mov|webm|ts|m2ts|wmv|mpg|mpeg|srt|ass|ssa|sub|idx|jpg|png|nfo)$/i;
     const entries = fs
       .readdirSync(full, { withFileTypes: true })
-      .filter((e) => !e.name.startsWith('.') && (e.isDirectory() || allowed.test(e.name)))
+      .filter((e) => !/^[.$]/.test(e.name) && (e.isDirectory() || (e.isFile() && BROWSE_EXT.test(e.name))))
       .sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1));
     listing(`/${parts.join('/')}/`, [
       '<a href="../">../</a>',
@@ -550,8 +565,52 @@ function serveStatic(req, res, pathname) {
   sendFile(req, res, file);
 }
 
+// ---------- protección de pedidos ----------
+
+const ownAddrs = () => new Set(['127.0.0.1', '::1', ...Object.values(os.networkInterfaces()).flat().filter(Boolean).map((i) => i.address)]);
+const bareAddr = (a = '') => a.replace(/^::ffff:/, '');
+
+// El pedido viene de la propia PC (por localhost o por su IP de la red).
+function isLocalClient(req) {
+  return ownAddrs().has(bareAddr(req.socket.remoteAddress));
+}
+
+// Solo se aceptan pedidos dirigidos a nombres de esta PC: bloquea el "DNS rebinding", con el que una página web
+// maliciosa apunta su propio dominio a tu IP para leer LocalFlix desde el navegador de la víctima.
+function hostAllowed(hostHeader) {
+  if (!hostHeader) return true; // clientes HTTP/1.0 muy viejos
+  let h = hostHeader.toLowerCase();
+  h = h.startsWith('[') ? h.slice(1, h.indexOf(']')) : h.replace(/:\d+$/, '');
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local')) return true;
+  if (h === os.hostname().toLowerCase()) return true;
+  if (config.allowedHosts.some((x) => String(x).toLowerCase() === h)) return true;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h.includes(':')) return true; // una IP no se puede "rebindear"
+  return false;
+}
+
+// Los pedidos que cambian algo tienen que venir de la propia interfaz: JSON y, si hay Origin, del mismo host.
+// Así una página externa no puede enviar formularios o fetch "simples" a LocalFlix.
+function writeAllowed(req) {
+  if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return false;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
+  if (!hostAllowed(req.headers.host)) {
+    res.writeHead(421, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Host no permitido. Si usas un nombre propio para esta PC, agrégalo en "allowedHosts" de config.json.');
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !writeAllowed(req)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('Pedido rechazado.');
+  }
   try {
     for (const r of routes) {
       if (r.method !== req.method && !(r.method === 'GET' && req.method === 'HEAD')) continue;

@@ -293,11 +293,16 @@ async function renderFolders() {
   const s = await api('settings');
   const F = { dirs: s.mediaDirs.map((d) => d.path), bad: new Set(s.mediaDirs.filter((d) => !d.ok).map((d) => d.path)), browse: null, saved: s.mediaDirs.map((d) => d.path).join('\n') };
   const first = !F.dirs.length;
+  const lead = !s.canEdit
+    ? `Por seguridad, las carpetas solo se cambian desde la PC donde corre LocalFlix: ábrelo ahí en <b>http://localhost:${location.port || 80}</b>.`
+    : first
+      ? 'Elige la carpeta donde guardas tus series y películas. Puedes agregar varias y cambiarlas cuando quieras desde el ícono de carpeta, arriba a la derecha.'
+      : 'LocalFlix busca videos en estas carpetas y en todas sus subcarpetas.';
   app.innerHTML = `<div class="page folders">
     <h1>${first ? 'Bienvenido a LocalFlix' : 'Carpetas de la biblioteca'}</h1>
-    <p class="lead">${first ? 'Elige la carpeta donde guardas tus series y películas. Puedes agregar varias y cambiarlas cuando quieras desde el ícono de carpeta, arriba a la derecha.' : 'LocalFlix busca videos en estas carpetas y en todas sus subcarpetas.'}</p>
+    <p class="lead">${lead}</p>
     <ul class="dirlist" id="dirList"></ul>
-    <div class="actions" style="margin:14px 0 0">
+    <div class="actions" style="margin:14px 0 0" ${s.canEdit ? '' : 'hidden'}>
       <button class="btn" id="addDir">+ Agregar carpeta</button>
       <button class="btn primary" id="saveDirs">Guardar</button>
     </div>
@@ -319,7 +324,7 @@ async function renderFolders() {
   };
   const drawDirs = () => {
     list.innerHTML = F.dirs.length
-      ? F.dirs.map((d, i) => `<li class="${F.bad.has(d) ? 'bad' : ''}">${FOLDER_ICON}<span>${esc(d)}${F.bad.has(d) ? ' <small>(no se encuentra)</small>' : ''}</span><button class="btn small" data-rm="${i}" aria-label="Quitar">Quitar</button></li>`).join('')
+      ? F.dirs.map((d, i) => `<li class="${F.bad.has(d) ? 'bad' : ''}">${FOLDER_ICON}<span>${esc(d)}${F.bad.has(d) ? ' <small>(no se encuentra)</small>' : ''}</span>${s.canEdit ? `<button class="btn small" data-rm="${i}" aria-label="Quitar">Quitar</button>` : ''}</li>`).join('')
       : '<li class="none">Todavía no hay carpetas.</li>';
     $('#saveDirs').disabled = !F.dirs.length && !F.saved;
   };
@@ -942,10 +947,15 @@ video.addEventListener('pause', () => {
   // Tras 10 min en pausa cerramos el stream (libera ffmpeg); al reanudar se reabre en el mismo punto.
   P.pauseTimer = setTimeout(() => video.paused && unloadStream(), 10 * 60e3);
 });
-video.addEventListener('error', () => {
+video.addEventListener('error', async () => {
   if (!P.item || !video.getAttribute('src')) return;
   const at = cur();
   console.warn('[player] error', video.error?.code, video.error?.message, P.mode);
+  const busy = await api(`busy?sid=${encodeURIComponent(P.sid || '')}`).catch(() => null);
+  if (busy?.busy) {
+    spinner(false);
+    return showError(`Ya hay ${busy.max} reproducciones en curso en otros dispositivos. Cierra alguna e intenta de nuevo.`);
+  }
   if (P.mode === 'copy' && !P.copyFailed) {
     P.copyFailed = true;
     toast('Cambiando a modo compatible…');
