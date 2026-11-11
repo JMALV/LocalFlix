@@ -633,8 +633,12 @@ function startStream(t, { autoplay = true } = {}) {
   P.lastCT = -1;
   const q = new URLSearchParams({ t: t.toFixed(2), a: P.audio, m: P.mode, q: P.quality, sid: P.sid });
   if (P.sub >= 0) q.set('s', P.sub);
-  // En iPhone el reproductor nativo pide la lista HLS por su cuenta: lleva la clave en la URL.
-  video.src = USE_HLS ? withKey(`/api/hls/${P.item.id}/index.m3u8?${q}`) : `/api/play/${P.item.id}?${q}`;
+  // Al transmitir, la TV no ve los subtítulos que dibuja la página: van incrustados en el video.
+  P.burned = (casting() || P.castWanted) && !!P.info.subs[P.sub]?.text;
+  if (P.burned) q.set('burn', '1');
+  // La URL lleva la clave: en iPhone el reproductor nativo pide la lista HLS por su cuenta, y al transmitir
+  // la TV abre este mismo enlace sin la sesión del navegador.
+  video.src = withKey(USE_HLS ? `/api/hls/${P.item.id}/index.m3u8?${q}` : `/api/play/${P.item.id}?${q}`);
   spinner(true);
   showError(null);
   if (autoplay) video.play().catch(() => spinner(false));
@@ -750,6 +754,7 @@ async function loadCues() {
 
 function renderCue() {
   if (!P.cues) return;
+  if (P.burned) return (subtext.textContent = '');
   const t = cur();
   let lo = 0;
   let hi = P.cues.length - 1;
@@ -1015,7 +1020,7 @@ video.addEventListener('pause', () => {
   showControls();
   clearTimeout(P.pauseTimer);
   // Tras 10 min en pausa cerramos el stream (libera ffmpeg); al reanudar se reabre en el mismo punto.
-  P.pauseTimer = setTimeout(() => video.paused && unloadStream(), 10 * 60e3);
+  P.pauseTimer = setTimeout(() => video.paused && !casting() && unloadStream(), 10 * 60e3);
 });
 video.addEventListener('error', async () => {
   if (!P.item || !video.getAttribute('src')) return;
@@ -1043,9 +1048,63 @@ video.addEventListener('ended', () => {
   showNextUp();
 });
 
+// ---- transmitir a la TV (Chromecast / Google TV) ----
+// Usa la API Remote Playback del navegador: Chrome le pasa a la TV el enlace del video (con la clave)
+// y la TV lo pide directo al servidor. El celular o la PC quedan como control remoto.
+const casting = () => video.remote?.state === 'connected';
+const castBtn = $('#plCast');
+
+function castPrompt() {
+  if (!video.remote) return toast('Este navegador no puede transmitir. Usa Chrome.');
+  // La TV pide el enlace desde su comienzo: lo reabrimos en el segundo actual para que siga desde acá.
+  if (!casting()) {
+    P.castWanted = true;
+    startStream(cur(), { autoplay: !video.paused });
+  }
+  video.remote.prompt().catch((e) => {
+    if (e.name === 'NotFoundError') toast('No encontré ninguna TV en la red. Revisa que esté prendida y en el mismo Wi-Fi.', 4000);
+    else if (e.name === 'NotSupportedError') toast('Este video no se puede transmitir desde este navegador.', 4000);
+    else if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast('No se pudo transmitir.');
+    // No se conectó: volvemos a los subtítulos de la página.
+    if (P.castWanted && !casting()) {
+      P.castWanted = false;
+      if (P.burned) startStream(cur(), { autoplay: !video.paused });
+    }
+  });
+}
+
+function castState() {
+  const st = video.remote?.state || 'disconnected';
+  castBtn.classList.toggle('on', st === 'connected');
+  castBtn.setAttribute('aria-label', st === 'connected' ? 'Dejar de transmitir' : 'Transmitir a la TV');
+  $('#castNote').hidden = st === 'disconnected';
+  $('#castName').textContent = st === 'connecting' ? 'Conectando con la TV…' : 'Transmitiendo a la TV';
+  player.classList.toggle('casting', st !== 'disconnected');
+}
+
+if (video.remote && !USE_HLS) {
+  castBtn.hidden = false;
+  video.remote.watchAvailability((ok) => (castBtn.hidden = !ok)).catch(() => {});
+  video.remote.addEventListener('connecting', castState);
+  video.remote.addEventListener('connect', () => {
+    castState();
+    toast('Transmitiendo a la TV');
+  });
+  video.remote.addEventListener('disconnect', () => {
+    P.castWanted = false;
+    castState();
+    if (P.burned && P.item) startStream(cur(), { autoplay: false });
+    if (P.item) toast('Se dejó de transmitir');
+  });
+}
+
 // Vigilante: si el video se congela, reabre el stream en el mismo punto.
 setInterval(() => {
   if (!P.item || P.unloaded || video.paused || P.pendingSeek != null || !video.getAttribute('src')) return;
+  if (casting()) {
+    if (Date.now() - P.lastSave > 10000) saveProgress();
+    return;
+  }
   const ct = video.currentTime;
   if (ct === P.lastCT) {
     if (++P.stuck >= 15) {
@@ -1087,6 +1146,7 @@ $('#plRew').onclick = () => seekBy(-10);
 $('#plFwd').onclick = () => seekBy(10);
 $('#plNext').onclick = playNext;
 $('#plFs').onclick = toggleFs;
+$('#plCast').onclick = castPrompt;
 $('#plSettings').onclick = () => (panel.hidden ? openPanel() : closePanel());
 
 ui.addEventListener('click', (e) => {

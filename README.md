@@ -89,9 +89,14 @@ Si mueves la carpeta de LocalFlix a otro lugar, vuelve a ejecutar `Activar arran
 
 ## En la TV (Android / Google TV)
 
-Google TV no trae navegador. Lo mejor es un reproductor que lea el archivo directo, sin conversión:
+Lo más simple es **transmitir desde el celular o la PC**. En el reproductor de LocalFlix, con Chrome (Android o Windows), toca
+el botón **Transmitir** (el ícono de pantalla con ondas) y elige la TV. La TV tiene que tener Chromecast integrado
+(Android TV / Google TV o un Chromecast) y estar en el mismo Wi-Fi. La TV pide el video directo a la PC y el celular
+queda como control remoto. El botón solo aparece cuando Chrome encuentra una TV en la red. En iPhone no está disponible.
 
-- **Kodi** (recomendado): Videos → Archivos → Agregar videos → Explorar → *Agregar ubicación de red*:
+Si prefieres no depender del celular, usa un reproductor en la TV que lea el archivo directo:
+
+- **Kodi**: Videos → Archivos → Agregar videos → Explorar → *Agregar ubicación de red*:
   - protocolo **Servidor web (HTTP)**
   - dirección: la IP de tu PC
   - puerto `8484`

@@ -395,6 +395,7 @@ function playOpts(it, info, q) {
     mode: q.get('m') === 'copy' ? 'copy' : 'transcode',
     height: qual && /^\d+$/.test(qual) ? +qual : 1080,
     sid: (q.get('sid') || '').replace(/[^\w-]/g, '').slice(0, 64),
+    burn: q.get('burn') === '1',
   };
 }
 
@@ -408,7 +409,17 @@ route('GET', /^\/api\/play\/(\w+)$/, async (req, res, m, url) => {
   } catch (e) {
     return json(res, { error: e.message }, 500);
   }
-  media.stream(req, res, playOpts(it, info, url.searchParams));
+  const o = playOpts(it, info, url.searchParams);
+  // Al transmitir, los subtítulos de texto van incrustados: la TV no ve los que dibuja la página.
+  if (o.burn && info.subs[o.sub]?.text) {
+    try {
+      o.burnFile = await media.textSub(it, o.sub);
+      o.mode = 'transcode';
+    } catch (e) {
+      console.warn('[stream] no se pudieron preparar los subtítulos:', e.message);
+    }
+  }
+  media.stream(req, res, o);
 });
 
 // Reproducción HLS para Safari / iPhone.

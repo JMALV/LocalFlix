@@ -262,3 +262,8 @@ body.locked header { display: none; }
 .auth-form .btn { justify-content: center; padding: 12px; }
 .folders h2.sec { font-size: 19px; margin: 36px 0 8px; }
 .folders .lead code { background: var(--bg3); padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; user-select: all; }
+
+/* transmitir */
+.cast-note { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #ddd; font-size: 16px; pointer-events: none; text-align: center; padding: 16px; }
+.cast-note svg { width: 64px; height: 64px; fill: var(--accent); }
+#plCast.on svg { fill: var(--accent); }
