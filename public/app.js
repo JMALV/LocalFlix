@@ -681,7 +681,7 @@ function hideControls() {
 
 function togglePlay() {
   if (!P.item) return;
-  if (P.unloaded || (video.paused && P.pausedAt && Date.now() - P.pausedAt > 3 * 60e3)) return startStream(cur());
+  if (P.unloaded || (!remoteOn() && video.paused && P.pausedAt && Date.now() - P.pausedAt > 3 * 60e3)) return startStream(cur());
   if (video.paused) video.play().catch(() => {});
   else video.pause();
 }
@@ -1024,9 +1024,13 @@ video.addEventListener('pause', () => {
 });
 video.addEventListener('error', async () => {
   if (!P.item || !video.getAttribute('src')) return;
+  // Al transmitir, la TV toma el stream de este reproductor y la copia local se corta: no es un error.
+  // Reabrirlo acá le cortaría el video a la TV.
+  if (remoteOn()) return console.warn('[player] error local ignorado: se está transmitiendo');
   const at = cur();
   console.warn('[player] error', video.error?.code, video.error?.message, P.mode);
   const busy = await api(`busy?sid=${encodeURIComponent(P.sid || '')}`).catch(() => null);
+  if (remoteOn()) return;
   if (busy?.busy) {
     spinner(false);
     return showError(`Ya hay ${busy.max} reproducciones en curso en otros dispositivos. Cierra alguna e intenta de nuevo.`);
@@ -1043,7 +1047,10 @@ video.addEventListener('error', async () => {
 video.addEventListener('ended', () => {
   if (!P.item) return;
   const at = cur();
-  if (dur() && at < dur() - 20 && P.retries++ < 3) return startStream(at); // corte prematuro: reanudar
+  if (dur() && at < dur() - 20) {
+    if (remoteOn()) return; // la copia local se cortó porque la TV tomó el stream
+    if (P.retries++ < 3) return startStream(at); // corte prematuro: reanudar
+  }
   saveProgress(true, dur());
   showNextUp();
 });
@@ -1052,6 +1059,7 @@ video.addEventListener('ended', () => {
 // Usa la API Remote Playback del navegador: Chrome le pasa a la TV el enlace del video (con la clave)
 // y la TV lo pide directo al servidor. El celular o la PC quedan como control remoto.
 const casting = () => video.remote?.state === 'connected';
+const remoteOn = () => !!video.remote && video.remote.state !== 'disconnected'; // conectando o transmitiendo
 const castBtn = $('#plCast');
 
 function castPrompt() {
